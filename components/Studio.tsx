@@ -3,22 +3,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Episode, ScriptRequest } from "@/lib/schema";
 import { parsePartialJson } from "@/lib/partialJson";
-import { OPENAI_VOICES, type OpenAIVoice } from "@/lib/voices";
+import { VOICES } from "@/lib/voices";
+import { joinWavs } from "@/lib/wav";
 import { SAMPLE_EPISODE } from "@/lib/sample";
 import {
   EMPTY_SETTINGS, authHeaders, download, loadSettings, pool, readNdjson, saveSettings, slugify, type Settings,
 } from "@/lib/client";
 import SettingsPanel from "./SettingsPanel";
 
-type HostConfig = { name: string; voice: OpenAIVoice; style: string };
-type Status = { claude: boolean; tts: boolean; accessCode: boolean; model: string };
-type Engine = "ai" | "browser";
+type HostConfig = { name: string; voice: string; gVoice: string; style: string };
+export type Status = { claude: boolean; gemini: boolean; tts: boolean; accessCode: boolean; models: { claude: string; gemini: string } };
+type Writer = "gemini" | "claude";
+type Engine = "gemini" | "openai" | "browser";
 type Clip = { key: string; url: string; blob: Blob };
 
 const DEFAULT_HOSTS: HostConfig[] = [
-  { name: "Maya", voice: "coral", style: "Warm and curious, smiling while she talks." },
-  { name: "Leo", voice: "ash", style: "Upbeat and a little nerdy, quick to react." },
-  { name: "Ava", voice: "sage", style: "Calm, thoughtful and measured." },
+  { name: "Maya", voice: "coral", gVoice: "Aoede", style: "Warm and curious, smiling while she talks." },
+  { name: "Leo", voice: "ash", gVoice: "Puck", style: "Upbeat and a little nerdy, quick to react." },
+  { name: "Ava", voice: "sage", gVoice: "Charon", style: "Calm, thoughtful and measured." },
 ];
 
 const TONES: { id: ScriptRequest["tone"]; label: string }[] = [
@@ -41,7 +43,9 @@ const MODES: { id: ScriptRequest["mode"]; label: string; placeholder: string }[]
   { id: "text", label: "Paste text", placeholder: "Paste a blog post, notes, a transcript or a newsletter…" },
 ];
 
-const clipKey = (speaker: string, text: string, voice: string, style: string) => `${voice}|${style}|${speaker}|${text}`;
+const clipKey = (engine: Engine, speaker: string, text: string, voice: string, style: string) =>
+  `${engine}|${voice}|${style}|${speaker}|${text}`;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function Studio() {
   const [settings, setSettings] = useState<Settings>(EMPTY_SETTINGS);
@@ -62,7 +66,9 @@ export default function Studio() {
   const [error, setError] = useState("");
   const [meta, setMeta] = useState<string>("");
 
-  const [engine, setEngine] = useState<Engine>("ai");
+  const [writer, setWriter] = useState<Writer>("gemini");
+  const [engine, setEngine] = useState<Engine>("gemini");
+  const [enginePinned, setEnginePinned] = useState(false); // true once the user picks a voice engine
   const [clips, setClips] = useState<Record<number, Clip>>({});
   const [rendering, setRendering] = useState<{ done: number; total: number } | null>(null);
   const [playing, setPlaying] = useState<number | null>(null);
@@ -76,16 +82,30 @@ export default function Studio() {
   }, []);
 
   const activeHosts = hosts.slice(0, hostCount);
-  const canWrite = Boolean(settings.anthropicKey || (status?.claude && (!status.accessCode || settings.accessCode)));
-  const canVoice = Boolean(settings.openaiKey || (status?.tts && (!status.accessCode || settings.accessCode)));
+  const unlocked = !status?.accessCode || Boolean(settings.accessCode);
+  const canGemini = Boolean(settings.geminiKey || (status?.gemini && unlocked));
+  const canClaude = Boolean(settings.anthropicKey || (status?.claude && unlocked));
+  const canOpenAI = Boolean(settings.openaiKey || (status?.tts && unlocked));
+  const canWrite = writer === "gemini" ? canGemini : canClaude;
+  const voiceId = (h: HostConfig) => (engine === "gemini" ? h.gVoice : h.voice);
 
   useEffect(() => {
     if (playing !== null) document.getElementById(`line-${playing}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [playing]);
 
+  // Pick the best available providers: free Gemini first, then paid, then browser voices.
   useEffect(() => {
-    if (status && !canVoice) setEngine("browser");
-  }, [status, canVoice]);
+    if (!status) return;
+    if (writer === "gemini" && !canGemini && canClaude) setWriter("claude");
+    if (writer === "claude" && !canClaude && canGemini) setWriter("gemini");
+  }, [status, writer, canGemini, canClaude]);
+
+  useEffect(() => {
+    if (!status) return;
+    const best: Engine = canGemini ? "gemini" : canOpenAI ? "openai" : "browser";
+    const unavailable = (engine === "gemini" && !canGemini) || (engine === "openai" && !canOpenAI);
+    if (unavailable || (!enginePinned && engine !== best)) setEngine(best);
+  }, [status, engine, enginePinned, canGemini, canOpenAI]);
 
   // Map each speaker name in the script to a host's voice settings.
   const voiceFor = useCallback(
@@ -119,9 +139,10 @@ export default function Studio() {
     setEpisode(null);
     setClips({});
     setWriting(true);
-    setProgressNote("Connecting to Claude…");
+    setProgressNote(`Connecting to ${writer === "gemini" ? "Gemini" : "Claude"}…`);
 
     const body: ScriptRequest = {
+      provider: writer,
       mode,
       input: input.trim(),
       hostNames: activeHosts.map((h) => h.name.trim() || "Host"),
@@ -216,7 +237,7 @@ export default function Studio() {
     !!episode && episode.lines.length > 0 &&
     episode.lines.every((l, i) => {
       const v = voiceFor(l.speaker);
-      return clips[i]?.key === clipKey(l.speaker, l.text, v.voice, v.style);
+      return clips[i]?.key === clipKey(engine, l.speaker, l.text, voiceId(v), v.style);
     });
 
   async function renderAudio(): Promise<Record<number, Clip> | null> {
@@ -225,22 +246,28 @@ export default function Studio() {
     const next: Record<number, Clip> = { ...clips };
     const todo = episode.lines
       .map((l, i) => ({ l, i, v: voiceFor(l.speaker) }))
-      .filter(({ l, i, v }) => l.text.trim() && next[i]?.key !== clipKey(l.speaker, l.text, v.voice, v.style));
+      .filter(({ l, i, v }) => l.text.trim() && next[i]?.key !== clipKey(engine, l.speaker, l.text, voiceId(v), v.style));
 
     setRendering({ done: episode.lines.length - todo.length, total: episode.lines.length });
     try {
-      await pool(todo, 4, async ({ l, i, v }) => {
-        const res = await fetch("/api/tts", {
-          method: "POST",
-          headers: { "content-type": "application/json", ...authHeaders(settings) },
-          body: JSON.stringify({ text: l.text, voice: v.voice, style: v.style }),
-        });
+      // Free tiers have low per-minute limits, so Gemini runs fewer requests at once and retries on 429.
+      await pool(todo, engine === "gemini" ? 2 : 4, async ({ l, i, v }) => {
+        let res: Response;
+        for (let attempt = 0; ; attempt++) {
+          res = await fetch("/api/tts", {
+            method: "POST",
+            headers: { "content-type": "application/json", ...authHeaders(settings) },
+            body: JSON.stringify({ provider: engine, text: l.text, voice: voiceId(v), style: v.style }),
+          });
+          if (res.status !== 429 || attempt >= 3) break;
+          await sleep(8000 * (attempt + 1));
+        }
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
           throw new Error(data.error ?? `Voice generation failed (${res.status})`);
         }
         const blob = await res.blob();
-        next[i] = { key: clipKey(l.speaker, l.text, v.voice, v.style), url: URL.createObjectURL(blob), blob };
+        next[i] = { key: clipKey(engine, l.speaker, l.text, voiceId(v), v.style), url: URL.createObjectURL(blob), blob };
         setRendering((r) => (r ? { ...r, done: r.done + 1 } : r));
       });
       setClips({ ...next });
@@ -292,13 +319,18 @@ export default function Studio() {
     playLine(from);
   }
 
-  async function downloadMp3() {
+  async function downloadAudio() {
     if (!episode) return;
     const ready = allClipsReady ? clips : await renderAudio();
     if (!ready) return;
-    // MP3 frames can be concatenated directly, so the episode is just the clips in order.
     const parts = episode.lines.map((_, i) => ready[i]?.blob).filter(Boolean) as Blob[];
-    download(new Blob(parts, { type: "audio/mpeg" }), `${slugify(episode.title)}.mp3`);
+    if (engine === "gemini") {
+      // Gemini clips are WAV: join their PCM data under one header.
+      download(await joinWavs(parts), `${slugify(episode.title)}.wav`);
+    } else {
+      // MP3 frames can be concatenated directly, so the episode is just the clips in order.
+      download(new Blob(parts, { type: "audio/mpeg" }), `${slugify(episode.title)}.mp3`);
+    }
   }
 
   function downloadScript() {
@@ -328,7 +360,7 @@ export default function Studio() {
           </div>
           <div>
             <p className="font-display text-lg leading-none">AI Podcast Studio</p>
-            <p className="text-xs text-muted">Claude writes it. AI voices perform it.</p>
+            <p className="text-xs text-muted">AI writes it. AI voices perform it.</p>
           </div>
         </div>
         <button className="btn-ghost" onClick={() => setShowSettings(true)}>
@@ -342,13 +374,15 @@ export default function Studio() {
             Turn any idea into a <span className="bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">podcast episode</span>.
           </h1>
           <p className="mt-4 max-w-2xl text-muted">
-            Give it a topic, an article link or your own notes. Claude writes a natural conversation between your hosts, streamed live, and
-            AI voices turn it into an episode you can play and download.
+            Give it a topic, an article link or your own notes. Gemini or Claude writes a natural conversation between your hosts, streamed
+            live, and AI voices turn it into an episode you can play and download.
           </p>
           {status && !canWrite && (
             <p className="mt-4 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3 text-sm">
-              Demo mode: add your own API key in <button className="underline" onClick={() => setShowSettings(true)}>Settings</button>
-              {status.accessCode && status.claude ? " or enter the access code" : ""} to write new episodes, or{" "}
+              Demo mode: to write new episodes, get a <strong>free</strong> Gemini API key from{" "}
+              <a className="underline" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio</a> (no card
+              needed) and paste it in <button className="underline" onClick={() => setShowSettings(true)}>Settings</button>
+              {status.accessCode && (status.gemini || status.claude) ? ", or enter the access code" : ""}. Or{" "}
               <button className="underline" onClick={loadSample}>load the sample episode</button> to try the player.
             </p>
           )}
@@ -400,16 +434,22 @@ export default function Studio() {
                         onChange={(e) => setHosts(hosts.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))}
                         aria-label={`Host ${i + 1} name`}
                       />
-                      <select
-                        className="field w-40"
-                        value={h.voice}
-                        onChange={(e) => setHosts(hosts.map((x, j) => (j === i ? { ...x, voice: e.target.value as OpenAIVoice } : x)))}
-                        aria-label={`Host ${i + 1} voice`}
-                      >
-                        {OPENAI_VOICES.map((v) => (
-                          <option key={v.id} value={v.id}>{v.label} · {v.vibe}</option>
-                        ))}
-                      </select>
+                      {engine === "browser" ? (
+                        <span className="field w-40 truncate text-muted" title="Switch to Gemini or OpenAI voices to pick a voice">Browser voice</span>
+                      ) : (
+                        <select
+                          className="field w-40"
+                          value={voiceId(h)}
+                          onChange={(e) =>
+                            setHosts(hosts.map((x, j) => (j === i ? { ...x, [engine === "gemini" ? "gVoice" : "voice"]: e.target.value } : x)))
+                          }
+                          aria-label={`Host ${i + 1} voice`}
+                        >
+                          {VOICES[engine].map((v) => (
+                            <option key={v.id} value={v.id}>{v.label} · {v.vibe}</option>
+                          ))}
+                        </select>
+                      )}
                     </div>
                     <input
                       className="field mt-2 text-xs"
@@ -452,7 +492,33 @@ export default function Studio() {
               </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="mt-6">
+              <p className="label">Script writer</p>
+              <div className="mt-2 flex gap-2">
+                <button
+                  className={`chip ${writer === "gemini" ? "chip-on" : ""}`}
+                  onClick={() => setWriter("gemini")}
+                  title={canGemini ? `Google ${status?.models.gemini ?? "Gemini"}` : "Add a free Gemini key in Settings"}
+                >
+                  Gemini <span className="ml-1 rounded bg-emerald-400/15 px-1.5 text-[10px] font-semibold uppercase text-emerald-300">free tier</span>
+                </button>
+                <button
+                  className={`chip ${writer === "claude" ? "chip-on" : ""}`}
+                  onClick={() => setWriter("claude")}
+                  title={canClaude ? `Anthropic ${status?.models.claude ?? "Claude"}` : "Add an Anthropic key in Settings"}
+                >
+                  Claude
+                </button>
+              </div>
+              {status && !canWrite && (
+                <p className="mt-2 text-xs text-muted">
+                  {writer === "gemini" ? "Add a free Gemini key" : "Add an Anthropic key"} in{" "}
+                  <button className="underline" onClick={() => setShowSettings(true)}>Settings</button> to use this writer.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-5 flex flex-wrap items-center gap-3">
               <button className="btn-primary flex-1" onClick={writeScript} disabled={writing || !canWrite}>
                 {writing ? <><Eq /> {progressNote || "Writing…"}</> : "Write the episode"}
               </button>
@@ -496,26 +562,27 @@ export default function Studio() {
                     </button>
                   )}
                   <div className="flex rounded-xl border border-line p-0.5 text-xs">
-                    <button
-                      className={`rounded-lg px-2.5 py-1.5 ${engine === "ai" ? "bg-white/10 text-white" : "text-muted"}`}
-                      onClick={() => { stopPlayback(); setEngine("ai"); }}
-                      disabled={!canVoice}
-                      title={canVoice ? "OpenAI gpt-4o-mini-tts voices" : "Add an OpenAI key in Settings"}
-                    >
-                      AI voices
-                    </button>
-                    <button
-                      className={`rounded-lg px-2.5 py-1.5 ${engine === "browser" ? "bg-white/10 text-white" : "text-muted"}`}
-                      onClick={() => { stopPlayback(); setEngine("browser"); }}
-                    >
-                      Browser voices (free)
-                    </button>
+                    {([
+                      { id: "gemini", label: "Gemini voices", ok: canGemini, tip: "Gemini TTS (free tier)", need: "Add a free Gemini key in Settings" },
+                      { id: "openai", label: "OpenAI voices", ok: canOpenAI, tip: "OpenAI gpt-4o-mini-tts", need: "Add an OpenAI key in Settings" },
+                      { id: "browser", label: "Browser", ok: true, tip: "Your browser's built-in voices (free, no download)", need: "" },
+                    ] as const).map((o) => (
+                      <button
+                        key={o.id}
+                        className={`rounded-lg px-2.5 py-1.5 disabled:opacity-40 ${engine === o.id ? "bg-white/10 text-white" : "text-muted"}`}
+                        onClick={() => { stopPlayback(); setEngine(o.id); setEnginePinned(true); }}
+                        disabled={!o.ok}
+                        title={o.ok ? o.tip : o.need}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
                   </div>
                   <div className="ml-auto flex gap-2">
                     <button className="btn-ghost px-3" onClick={downloadScript} disabled={writing || !lineCount}>Script .md</button>
-                    {engine === "ai" && (
-                      <button className="btn-ghost px-3" onClick={downloadMp3} disabled={writing || !lineCount || !!rendering}>
-                        {allClipsReady ? "Download MP3" : "Render MP3"}
+                    {engine !== "browser" && (
+                      <button className="btn-ghost px-3" onClick={downloadAudio} disabled={writing || !lineCount || !!rendering}>
+                        {allClipsReady ? "Download audio" : "Render audio"}
                       </button>
                     )}
                   </div>
@@ -614,9 +681,9 @@ function EmptyState({ writing }: { writing: boolean }) {
 function HowItWorks() {
   const steps = [
     { t: "Source", d: "Topic, pasted text, or a link. Links are fetched server-side and cleaned with Mozilla Readability, with SSRF checks." },
-    { t: "Script", d: "Claude writes the episode with structured outputs (a strict JSON schema), streamed and parsed live so lines appear as they're written." },
-    { t: "Voices", d: "Each line goes to steerable text-to-speech with a per-host voice and delivery style. Browser voices give a free fallback." },
-    { t: "Episode", d: "Clips play back in order with line highlighting and export as one MP3 plus a Markdown script." },
+    { t: "Script", d: "Gemini or Claude writes the episode as JSON that must match a strict schema, streamed and parsed live so lines appear as they're written." },
+    { t: "Voices", d: "Each line goes to steerable text-to-speech (Gemini or OpenAI) with a per-host voice and delivery style. Browser voices are the free fallback." },
+    { t: "Episode", d: "Clips play back in order with line highlighting and export as one audio file plus a Markdown script." },
   ];
   return (
     <section className="mt-14">
@@ -631,7 +698,7 @@ function HowItWorks() {
         ))}
       </div>
       <p className="mt-6 text-xs text-muted">
-        Built with Next.js, the Claude API and OpenAI TTS. Bring your own keys: they stay in your browser and are only sent with your own requests.
+        Built with Next.js, the Gemini API, the Claude API and OpenAI TTS. Bring your own keys: they stay in your browser and are only sent with your own requests.
       </p>
     </section>
   );

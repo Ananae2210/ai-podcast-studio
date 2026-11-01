@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 import type { Settings } from "@/lib/client";
+import type { Status as AppStatus } from "./Studio";
 
-type Status = { claude: boolean; tts: boolean; accessCode: boolean; model: string } | null;
+type Status = AppStatus | null;
 
 export default function SettingsPanel({
   value, status, onSave, onClose,
@@ -20,10 +21,16 @@ export default function SettingsPanel({
         </p>
 
         <div className="mt-5 space-y-4">
-          <Field label="Anthropic API key (scripts)" hint={status?.claude ? "Optional: this site has a shared key." : "Required to write new episodes."}>
+          <Field
+            label="Gemini API key (scripts + voices, free)"
+            hint={status?.gemini ? "Optional: this site has a shared key." : "Recommended. Free at aistudio.google.com/apikey, no card needed."}
+          >
+            <input className="field" type="password" placeholder="AIza…" value={draft.geminiKey} onChange={set("geminiKey")} autoComplete="off" />
+          </Field>
+          <Field label="Anthropic API key (Claude scripts)" hint={status?.claude ? "Optional: this site has a shared key." : "Optional: paid, pay-as-you-go."}>
             <input className="field" type="password" placeholder="sk-ant-…" value={draft.anthropicKey} onChange={set("anthropicKey")} autoComplete="off" />
           </Field>
-          <Field label="OpenAI API key (voices)" hint={status?.tts ? "Optional: this site has a shared key." : "Optional: without it, browser voices are used."}>
+          <Field label="OpenAI API key (voices)" hint={status?.tts ? "Optional: this site has a shared key." : "Optional: paid. Gemini or browser voices work without it."}>
             <input className="field" type="password" placeholder="sk-…" value={draft.openaiKey} onChange={set("openaiKey")} autoComplete="off" />
           </Field>
           {status?.accessCode && (
@@ -33,7 +40,11 @@ export default function SettingsPanel({
           )}
         </div>
 
-        {status && <p className="mt-4 font-mono text-[11px] text-muted">Script model: {status.model}</p>}
+        {status && (
+          <p className="mt-4 font-mono text-[11px] text-muted">
+            Models: {status.models.gemini} · {status.models.claude}
+          </p>
+        )}
 
         <div className="mt-6 flex justify-end gap-2">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>

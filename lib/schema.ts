@@ -58,6 +58,7 @@ export const episodeJsonSchema = {
 } as const;
 
 export const RequestSchema = z.object({
+  provider: z.enum(["gemini", "claude"]).default("claude"),
   mode: z.enum(["topic", "url", "text"]),
   input: z.string().min(3).max(40_000),
   hostNames: z.array(z.string().min(1).max(30)).min(1).max(3),
