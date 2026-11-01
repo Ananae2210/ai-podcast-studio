@@ -1,7 +1,7 @@
 "use client";
 
-export type Settings = { anthropicKey: string; openaiKey: string; accessCode: string };
-export const EMPTY_SETTINGS: Settings = { anthropicKey: "", openaiKey: "", accessCode: "" };
+export type Settings = { geminiKey: string; anthropicKey: string; openaiKey: string; accessCode: string };
+export const EMPTY_SETTINGS: Settings = { geminiKey: "", anthropicKey: "", openaiKey: "", accessCode: "" };
 const STORAGE_KEY = "podcast-studio-settings";
 
 export function loadSettings(): Settings {
@@ -18,6 +18,7 @@ export function saveSettings(s: Settings) {
 
 export function authHeaders(s: Settings): Record<string, string> {
   const h: Record<string, string> = {};
+  if (s.geminiKey) h["x-gemini-key"] = s.geminiKey;
   if (s.anthropicKey) h["x-anthropic-key"] = s.anthropicKey;
   if (s.openaiKey) h["x-openai-key"] = s.openaiKey;
   if (s.accessCode) h["x-access-code"] = s.accessCode;
