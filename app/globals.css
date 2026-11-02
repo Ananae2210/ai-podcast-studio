@@ -1,39 +1,63 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --font-display: var(--font-fraunces), ui-serif, Georgia, serif;
-  --color-ink: #0d0b14;
-  --color-panel: #16131f;
-  --color-line: #2a2538;
-  --color-accent: #ff6b4a;
-  --color-accent-2: #ffb347;
-  --color-muted: #9b94ad;
+  --font-sans: var(--font-barlow), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-barlow-semi), var(--font-barlow), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Menlo, monospace;
+
+  --color-ink: #0a0b0d;
+  --color-panel: #111316;
+  --color-panel-2: #171a1e;
+  --color-line: #23262c;
+  --color-line-strong: #31353c;
+  --color-fg: #eceef2;
+  --color-muted: #8a9099;
+  --color-accent: #ff5c35;
+  --color-host-1: #ff5c35;
+  --color-host-2: #7c9cff;
+  --color-host-3: #3ccf91;
 }
 
-html { color-scheme: dark; }
-body { background: var(--color-ink); color: #f2eff8; }
+html { color-scheme: dark; scroll-behavior: smooth; }
+body { background: var(--color-ink); color: var(--color-fg); }
+::selection { background: rgb(255 92 53 / 0.35); }
 
-.glow {
-  background:
-    radial-gradient(60rem 30rem at 10% -10%, rgba(255, 107, 74, 0.18), transparent 60%),
-    radial-gradient(50rem 30rem at 100% 0%, rgba(140, 90, 255, 0.14), transparent 60%);
+/* Faint accent light behind the hero only. */
+.hero-glow { background: radial-gradient(60rem 22rem at 20% -6rem, rgb(255 92 53 / 0.10), transparent 70%); }
+
+@utility card { @apply rounded-xl border border-line bg-panel; }
+@utility card-head { @apply flex items-center justify-between gap-3 border-b border-line px-5 py-4; }
+@utility label { @apply text-[12px] font-semibold uppercase tracking-[0.08em] text-muted; }
+@utility field {
+  @apply w-full rounded-lg border border-line bg-ink px-3 py-2 text-sm text-fg outline-none transition placeholder:text-muted/70 focus:border-accent/70 focus:ring-2 focus:ring-accent/20;
 }
 
-@utility card { @apply rounded-2xl border border-line bg-panel/80 backdrop-blur; }
-@utility label { @apply text-xs font-semibold uppercase tracking-[0.14em] text-muted; }
-@utility field { @apply w-full rounded-xl border border-line bg-ink/60 px-3 py-2 text-sm outline-none transition focus:border-accent/70 focus:ring-2 focus:ring-accent/20; }
-@utility chip { @apply rounded-full border border-line px-3 py-1.5 text-sm text-muted transition hover:border-accent/50 hover:text-white; }
-@utility chip-on { @apply border-accent bg-accent/15 text-white; }
-@utility btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50; }
-@utility btn-primary { @apply btn bg-gradient-to-r from-accent to-accent-2 text-ink hover:brightness-110; }
-@utility btn-ghost { @apply btn border border-line text-white hover:border-accent/60; }
+/* Segmented control */
+@utility seg { @apply inline-flex rounded-lg border border-line bg-ink p-1; }
+@utility seg-item { @apply rounded-md px-3 py-1.5 text-sm font-medium text-muted transition hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-muted; }
+@utility seg-on { @apply bg-panel-2 text-fg shadow-sm ring-1 ring-line-strong; }
+
+/* Selectable option (tone, writer) */
+@utility chip { @apply rounded-lg border border-line bg-ink px-3 py-1.5 text-sm font-medium text-muted transition hover:border-line-strong hover:text-fg; }
+@utility chip-on { @apply border-accent/70 bg-accent/10 text-fg; }
+
+@utility btn {
+  @apply inline-flex h-10 items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-45;
+}
+@utility btn-primary { @apply btn bg-accent text-white hover:bg-[#ff7350] active:bg-[#e8502d]; }
+@utility btn-ghost { @apply btn border border-line-strong bg-panel-2 text-fg hover:border-muted/50; }
+@utility btn-sm { @apply h-8 px-3 text-[13px]; }
 
 @keyframes bar { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
-.eq span { display: inline-block; width: 3px; margin: 0 1px; height: 14px; background: var(--color-accent); border-radius: 2px; animation: bar 0.9s ease-in-out infinite; transform-origin: bottom; }
+.eq span { display: inline-block; width: 3px; margin: 0 1px; height: 14px; background: currentColor; border-radius: 2px; animation: bar 0.9s ease-in-out infinite; transform-origin: bottom; }
 .eq span:nth-child(2) { animation-delay: 0.15s; }
 .eq span:nth-child(3) { animation-delay: 0.3s; }
 .eq span:nth-child(4) { animation-delay: 0.45s; }
 
 .cursor::after { content: "▍"; margin-left: 2px; color: var(--color-accent); animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .eq span, .cursor::after { animation: none; }
+  html { scroll-behavior: auto; }
+}
