@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Settings } from "@/lib/client";
 import type { Status as AppStatus } from "./Studio";
 
@@ -10,12 +10,17 @@ export default function SettingsPanel({
   value, status, onSave, onClose,
 }: { value: Settings; status: Status; onSave: (s: Settings) => void; onClose: () => void }) {
   const [draft, setDraft] = useState(value);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   const set = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, [k]: e.target.value.trim() });
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4" onClick={onClose}>
-      <div className="card w-full max-w-md p-6" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
-        <h2 className="font-display text-2xl">Settings</h2>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
+      <div className="card w-full max-w-md p-6 shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="API keys">
+        <h2 className="font-display text-2xl font-semibold">API keys</h2>
         <p className="mt-1 text-sm text-muted">
           Keys are saved only in this browser (localStorage) and sent with your own requests. They're never stored on the server.
         </p>
@@ -40,7 +45,7 @@ export default function SettingsPanel({
           )}
         </div>
 
-        {status && (
+        {status?.models && (
           <p className="mt-4 font-mono text-[11px] text-muted">
             Models: {status.models.gemini} · {status.models.claude}
           </p>

@@ -1,19 +1,19 @@
 import type { Metadata } from "next";
-import { Fraunces, Inter } from "next/font/google";
+import { Barlow, Barlow_Semi_Condensed } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const fraunces = Fraunces({ subsets: ["latin"], variable: "--font-fraunces" });
+const barlow = Barlow({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-barlow" });
+const barlowSemi = Barlow_Semi_Condensed({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-barlow-semi" });
 
 export const metadata: Metadata = {
   title: "AI Podcast Studio",
-  description: "Turn a topic, article or notes into a multi-host podcast episode with Claude and AI voices.",
+  description: "Turn a topic, article or notes into a multi-host podcast episode with AI scripts and AI voices.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${inter.variable} ${fraunces.variable}`}>
-      <body className="min-h-screen font-sans antialiased">{children}</body>
+    <html lang="en" className={`${barlow.variable} ${barlowSemi.variable}`}>
+      <body className="min-h-screen font-sans text-[15px] antialiased">{children}</body>
     </html>
   );
 }
